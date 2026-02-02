@@ -4,7 +4,7 @@
 //
 //  Created by Xiaojing Meng on 1/19/26.
 //
-
+/*
 import Foundation
 
 struct SymptomEntry: Identifiable, Codable {
@@ -26,3 +26,4 @@ struct DayLog: Identifiable, Codable {
     var day: Date            // start-of-day
     var entries: [SymptomEntry]
 }
+*/

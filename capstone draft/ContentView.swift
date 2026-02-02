@@ -9,13 +9,14 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         TabView {
+            HomeView()
+                .tabItem{Label("Home", systemImage: "house.fill")}
             LogView()
                 .tabItem { Label("Log", systemImage: "list.bullet") }
 
         }
     }
 }
-
 
 /*
 import SwiftUI
@@ -44,8 +45,8 @@ struct ContentView: View {
         //}
     }
 }
-
+*/
 #Preview {
     ContentView()
 }
-*/
+
