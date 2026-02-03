@@ -10,7 +10,6 @@ import SwiftData
 struct LogView: View {
     @Environment(\.modelContext) private var context
 
-    // Fetch all day buckets, newest first
     @Query(sort: \NewSymptomModel.day, order: .reverse)
     private var days: [NewSymptomModel]
 
@@ -41,7 +40,15 @@ struct LogView: View {
                                     Text("\(entry.severity)")
                                         .foregroundStyle(.secondary)
                                 }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        deleteEntry(entry)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
                             }
+                            
                         }
                     }
                 }
@@ -61,15 +68,23 @@ struct LogView: View {
                 }
             }
             .task {
-                // Ensure today's group exists when this screen first appears
                 _ = try? SymptomService.ensureTodayBucket(context: context)
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                // If user returns after midnight, create today's bucket
+                // if user returns after midnight, create today
                 _ = try? SymptomService.ensureTodayBucket(context: context)
             }
+        }
+    }
+    
+    private func deleteEntry(_ entry: SymptomEntryModel) {
+        context.delete(entry)
+        do {
+            try context.save()
+        } catch {
+            print("Delete failed:", error)
         }
     }
 }

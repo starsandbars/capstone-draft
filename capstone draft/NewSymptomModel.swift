@@ -12,7 +12,6 @@ import SwiftData
 final class NewSymptomModel {
     var day: Date
 
-    // One day has many entries. Cascade delete is handy.
     @Relationship(deleteRule: .cascade, inverse: \SymptomEntryModel.dayLog)
     var entries: [SymptomEntryModel] = []
 
@@ -28,7 +27,6 @@ final class SymptomEntryModel {
     var severity: Int
     var time: Date
 
-    // Back-reference to the day bucket
     var dayLog: NewSymptomModel?
 
     init(name: String, severity: Int, time: Date = Date()) {

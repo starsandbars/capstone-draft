@@ -22,7 +22,6 @@ struct HomeView: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
 
-                // Header
                 VStack(alignment: .leading, spacing: 4) {
                     Text("This Week")
                         .font(.headline)
@@ -32,7 +31,7 @@ struct HomeView: View {
                 }
                 .padding(.horizontal)
 
-                // Chart
+              
                 if series.isEmpty {
                     ContentUnavailableView(
                         "No symptoms logged this week",
@@ -59,7 +58,7 @@ struct HomeView: View {
                             }
                         }
                     }
-                    .chartYScale(domain: 0...10) // assuming severity is 1-10
+                    .chartYScale(domain: 0...10)
                     .chartXAxis {
                         AxisMarks(values: weekDays()) { value in
                             AxisGridLine()
@@ -82,11 +81,10 @@ struct HomeView: View {
             }
             .navigationTitle("Home")
             .toolbar {
-                // Optional: quick jump to previous/next week
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("Previous Week") { shiftWeek(by: -1) }
-                        Button("Current Week") { setCurrentWeek() }
+                        Button("This Month") { /*new function that shows a month*/ }
+                        Button("This Week") { setCurrentWeek() }
                     } label: {
                         Image(systemName: "calendar")
                     }
@@ -99,10 +97,8 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Data loading
 
     private func reload() async {
-        // Fetch entries in [weekStart, weekEnd)
         do {
             let descriptor = FetchDescriptor<SymptomEntryModel>(
                 predicate: #Predicate { entry in
@@ -119,21 +115,14 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Build series with 0s for missing days
-
-    /// For each symptom name, create 7 points (one per day). Missing day => 0.
-    /// If multiple entries exist for the same symptom on a day, we take the MAX severity.
-    /// (Tell me if you prefer average instead.)
     private func buildSeries(entries: [SymptomEntryModel], weekStart: Date) -> [SymptomSeries] {
         let cal = Calendar.current
-        let days = weekDays(start: weekStart) // 7 dates, start-of-day
+        let days = weekDays(start: weekStart)
 
-        // Normalize symptom names (optional: keep as-is if you prefer case-sensitive)
         let symptomNames: [String] = Array(Set(entries.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }))
             .filter { !$0.isEmpty }
             .sorted()
 
-        // Map: symptom -> dayStart -> maxSeverity
         var maxBySymptomByDay: [String: [Date: Int]] = [:]
 
         for e in entries {
@@ -143,7 +132,6 @@ struct HomeView: View {
             maxBySymptomByDay[name, default: [:]][d] = max(maxBySymptomByDay[name]?[d] ?? 0, e.severity)
         }
 
-        // Create 7 points per symptom with 0 for missing days
         let result: [SymptomSeries] = symptomNames.map { name in
             let points = days.map { day in
                 SymptomPoint(
@@ -158,7 +146,6 @@ struct HomeView: View {
         return result
     }
 
-    // MARK: - Week helpers
 
     private func setCurrentWeek() {
         let interval = Calendar.current.dateInterval(of: .weekOfYear, for: Date())!
@@ -166,16 +153,6 @@ struct HomeView: View {
         weekEnd = interval.end
     }
 
-    private func shiftWeek(by weeks: Int) {
-        let cal = Calendar.current
-        if let newStart = cal.date(byAdding: .weekOfYear, value: weeks, to: weekStart) {
-            let interval = cal.dateInterval(of: .weekOfYear, for: newStart)!
-            weekStart = interval.start
-            weekEnd = interval.end
-        }
-    }
-
-    /// Returns 7 start-of-day dates starting at weekStart.
     private func weekDays(start: Date? = nil) -> [Date] {
         let cal = Calendar.current
         let s = start ?? weekStart
@@ -183,14 +160,12 @@ struct HomeView: View {
     }
 
     private func weekRangeString(start: Date, end: Date) -> String {
-        // end is start of next week; show through end - 1 day
         let cal = Calendar.current
         let lastDay = cal.date(byAdding: .day, value: -1, to: end) ?? end
         return "\(start.formatted(date: .abbreviated, time: .omitted)) – \(lastDay.formatted(date: .abbreviated, time: .omitted))"
     }
 }
 
-// MARK: - Chart data types
 
 struct SymptomSeries: Identifiable {
     var id: String { name }
