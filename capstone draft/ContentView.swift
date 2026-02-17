@@ -13,6 +13,8 @@ struct ContentView: View {
                 .tabItem{Label("Home", systemImage: "house.fill")}
             LogView()
                 .tabItem { Label("Log", systemImage: "list.bullet") }
+            ScheduleView()
+                .tabItem{Label("Schedule", systemImage: "calendar")}
 
         }
     }

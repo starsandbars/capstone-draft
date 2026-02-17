@@ -12,6 +12,12 @@ struct LogView: View {
 
     @Query(sort: \NewSymptomModel.day, order: .reverse)
     private var days: [NewSymptomModel]
+    
+    private var daysToShow: [NewSymptomModel] {
+        let cal = Calendar.current
+        let cutoff = cal.date(byAdding: .day, value: -6, to:cal.startOfDay(for: Date()))!
+        return days.filter {$0.day >= cutoff}
+    }
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingAdd = false
@@ -70,6 +76,15 @@ struct LogView: View {
             .task {
                 _ = try? SymptomService.ensureTodayBucket(context: context)
             }
+            .toolbar{
+                ToolbarItem(placement: .topBarLeading) {
+                        NavigationLink {
+                            FullLogView()
+                        } label: {
+                            Text("See Full")
+                        }
+                    }
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
@@ -89,3 +104,6 @@ struct LogView: View {
     }
 }
 
+#Preview{
+    LogView()
+}

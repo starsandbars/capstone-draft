@@ -10,33 +10,56 @@ import SwiftData
 import Charts
 
 struct HomeView: View {
+    enum RangeMode: String, CaseIterable, Identifiable {
+        case week = "This Week"
+        case month = "This Month"
+        var id: String { rawValue }
+    }
+
     @Environment(\.modelContext) private var context
 
-    @State private var weekStart: Date = Calendar.current.dateInterval(of: .weekOfYear, for: Date())!.start
-    @State private var weekEnd: Date = Calendar.current.dateInterval(of: .weekOfYear, for: Date())!.end
+    @State private var mode: RangeMode = .week
+
+    @State private var rangeStart: Date = Calendar.current.dateInterval(of: .weekOfYear, for: Date())!.start
+    @State private var rangeEnd: Date = Calendar.current.dateInterval(of: .weekOfYear, for: Date())!.end
 
     @State private var entries: [SymptomEntryModel] = []
+    @State private var allSymptomsInRange: [String] = []
+    @State private var selectedSymptoms: Set<String> = []
+
     @State private var series: [SymptomSeries] = []
+    @State private var showingFilter = false
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
 
+                // Toggle: This Week / This Month
+                Picker("Range", selection: $mode) {
+                    ForEach(RangeMode.allCases) { m in
+                        Text(m.rawValue).tag(m)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.top, 4)
+
+                // Header
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("This Week")
+                    Text(mode.rawValue)
                         .font(.headline)
-                    Text(weekRangeString(start: weekStart, end: weekEnd))
+                    Text(rangeString(start: rangeStart, end: rangeEnd))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal)
 
-              
+                // Chart
                 if series.isEmpty {
                     ContentUnavailableView(
-                        "No symptoms logged this week",
+                        "No data to show",
                         systemImage: "chart.line.uptrend.xyaxis",
-                        description: Text("Add a symptom to see trends.")
+                        description: Text("Try adding symptoms or adjusting filters.")
                     )
                     .padding(.top, 24)
                 } else {
@@ -60,18 +83,28 @@ struct HomeView: View {
                     }
                     .chartYScale(domain: 0...10)
                     .chartXAxis {
-                        AxisMarks(values: weekDays()) { value in
-                            AxisGridLine()
-                            AxisValueLabel {
-                                if let d = value.as(Date.self) {
-                                    Text(d, format: .dateTime.weekday(.abbreviated))
+                        if mode == .week {
+                            AxisMarks(values: weekDays(start: rangeStart)) { value in
+                                AxisGridLine()
+                                AxisValueLabel {
+                                    if let d = value.as(Date.self) {
+                                        Text(d, format: .dateTime.weekday(.abbreviated))
+                                    }
+                                }
+                            }
+                        } else {
+                            // Month: label every 7 days to avoid clutter
+                            AxisMarks(values: .stride(by: .day, count: 7)) { value in
+                                AxisGridLine()
+                                AxisValueLabel {
+                                    if let d = value.as(Date.self) {
+                                        Text(d, format: .dateTime.day())
+                                    }
                                 }
                             }
                         }
                     }
-                    .chartYAxis {
-                        AxisMarks(position: .leading)
-                    }
+                    .chartYAxis { AxisMarks(position: .leading) }
                     .chartLegend(position: .bottom, alignment: .leading)
                     .frame(height: 320)
                     .padding(.horizontal)
@@ -82,90 +115,163 @@ struct HomeView: View {
             .navigationTitle("Home")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("This Month") { /*new function that shows a month*/ }
-                        Button("This Week") { setCurrentWeek() }
+                    Button {
+                        showingFilter = true
                     } label: {
-                        Image(systemName: "calendar")
+                        Image(systemName: "line.3.horizontal.decrease.circle")
                     }
+                    .accessibilityLabel("Filter Symptoms")
+                    .disabled(allSymptomsInRange.isEmpty)
                 }
             }
-            .task { await reload() }
-            .onChange(of: weekStart) { _, _ in
-                Task { await reload() }
+            .sheet(isPresented: $showingFilter) {
+                NavigationStack {
+                    SymptomFilterView(
+                        allSymptoms: allSymptomsInRange,
+                        selectedSymptoms: $selectedSymptoms
+                    )
+                }
+            }
+            .task { await reloadForCurrentMode() }
+            .onChange(of: mode) { _, _ in
+                Task { await reloadForCurrentMode() }
+            }
+            .onChange(of: selectedSymptoms) { _, _ in
+                // Rebuild chart when filters change (no need to refetch DB)
+                series = buildSeries(entries: entries, start: rangeStart, end: rangeEnd, mode: mode, selected: selectedSymptoms)
             }
         }
     }
 
+    // MARK: - Reload logic
+
+    private func reloadForCurrentMode() async {
+        setRangeForMode()
+        await reload()
+    }
+
+    private func setRangeForMode() {
+        let cal = Calendar.current
+        let interval: DateInterval
+        switch mode {
+        case .week:
+            interval = cal.dateInterval(of: .weekOfYear, for: Date())!
+        case .month:
+            interval = cal.dateInterval(of: .month, for: Date())!
+        }
+        rangeStart = interval.start
+        rangeEnd = interval.end
+    }
 
     private func reload() async {
         do {
             let descriptor = FetchDescriptor<SymptomEntryModel>(
                 predicate: #Predicate { entry in
-                    entry.time >= weekStart && entry.time < weekEnd
+                    entry.time >= rangeStart && entry.time < rangeEnd
                 }
             )
             let fetched = try context.fetch(descriptor)
             entries = fetched
-            series = buildSeries(entries: fetched, weekStart: weekStart)
+
+            let symptoms = Array(Set(fetched.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }))
+                .filter { !$0.isEmpty }
+                .sorted()
+
+            allSymptomsInRange = symptoms
+
+            // If the user hasn't chosen filters yet, default to "all"
+            if selectedSymptoms.isEmpty {
+                selectedSymptoms = Set(symptoms)
+            } else {
+                // Keep only still-valid selections
+                selectedSymptoms = selectedSymptoms.intersection(symptoms)
+                // If everything got filtered out (e.g., switching range), fall back to all
+                if selectedSymptoms.isEmpty {
+                    selectedSymptoms = Set(symptoms)
+                }
+            }
+
+            series = buildSeries(entries: fetched, start: rangeStart, end: rangeEnd, mode: mode, selected: selectedSymptoms)
+
         } catch {
-            print("Failed to fetch weekly entries:", error)
+            print("❌ Fetch failed:", error)
             entries = []
+            allSymptomsInRange = []
+            selectedSymptoms = []
             series = []
         }
     }
 
-    private func buildSeries(entries: [SymptomEntryModel], weekStart: Date) -> [SymptomSeries] {
+    // MARK: - Build series (average per day, 0 if missing)
+
+    private func buildSeries(
+        entries: [SymptomEntryModel],
+        start: Date,
+        end: Date,
+        mode: RangeMode,
+        selected: Set<String>
+    ) -> [SymptomSeries] {
+
         let cal = Calendar.current
-        let days = weekDays(start: weekStart)
+        let days: [Date] = (mode == .week)
+            ? weekDays(start: start)
+            : monthDays(start: start, end: end)
 
-        let symptomNames: [String] = Array(Set(entries.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }))
-            .filter { !$0.isEmpty }
-            .sorted()
+        // Only show selected symptoms
+        let symptomNames = Array(selected).sorted()
 
-        var maxBySymptomByDay: [String: [Date: Int]] = [:]
+        // symptom -> dayStart -> (sum,count)
+        var sumCount: [String: [Date: (sum: Int, count: Int)]] = [:]
 
         for e in entries {
             let name = e.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { continue }
-            let d = cal.startOfDay(for: e.time)
-            maxBySymptomByDay[name, default: [:]][d] = max(maxBySymptomByDay[name]?[d] ?? 0, e.severity)
+            guard selected.contains(name) else { continue }
+
+            let dayStart = cal.startOfDay(for: e.time)
+            let current = sumCount[name]?[dayStart] ?? (0, 0)
+            sumCount[name, default: [:]][dayStart] = (current.sum + e.severity, current.count + 1)
         }
 
-        let result: [SymptomSeries] = symptomNames.map { name in
-            let points = days.map { day in
-                SymptomPoint(
-                    id: UUID(),
-                    day: day,
-                    intensity: maxBySymptomByDay[name]?[day] ?? 0
-                )
+        return symptomNames.map { name in
+            let points = days.map { day -> SymptomPoint in
+                if let sc = sumCount[name]?[day], sc.count > 0 {
+                    let avg = Double(sc.sum) / Double(sc.count)
+                    return SymptomPoint(id: UUID(), day: day, intensity: Int(avg.rounded()))
+                } else {
+                    return SymptomPoint(id: UUID(), day: day, intensity: 0)
+                }
             }
             return SymptomSeries(name: name, points: points)
         }
-
-        return result
     }
 
+    // MARK: - Date helpers
 
-    private func setCurrentWeek() {
-        let interval = Calendar.current.dateInterval(of: .weekOfYear, for: Date())!
-        weekStart = interval.start
-        weekEnd = interval.end
-    }
-
-    private func weekDays(start: Date? = nil) -> [Date] {
+    private func weekDays(start: Date) -> [Date] {
         let cal = Calendar.current
-        let s = start ?? weekStart
+        let s = cal.startOfDay(for: start)
         return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: s).map(cal.startOfDay(for:)) }
     }
 
-    private func weekRangeString(start: Date, end: Date) -> String {
+    private func monthDays(start: Date, end: Date) -> [Date] {
+        let cal = Calendar.current
+        var result: [Date] = []
+        var d = cal.startOfDay(for: start)
+        while d < end {
+            result.append(d)
+            d = cal.date(byAdding: .day, value: 1, to: d)!
+        }
+        return result
+    }
+
+    private func rangeString(start: Date, end: Date) -> String {
         let cal = Calendar.current
         let lastDay = cal.date(byAdding: .day, value: -1, to: end) ?? end
         return "\(start.formatted(date: .abbreviated, time: .omitted)) – \(lastDay.formatted(date: .abbreviated, time: .omitted))"
     }
 }
 
+// MARK: - Chart data types
 
 struct SymptomSeries: Identifiable {
     var id: String { name }
@@ -178,14 +284,8 @@ struct SymptomPoint: Identifiable {
     let day: Date
     let intensity: Int
 }
-/*import SwiftUI
-
-struct HomeView: View {
-    var body: some View {
-        Text("this is home")
-    }
-}*/
 
 #Preview {
     HomeView()
 }
+
